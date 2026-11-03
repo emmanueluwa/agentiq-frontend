@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { ArrowUp, Sparkles, Square } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { ArrowUp, Sparkles, Square, RotateCcw } from "lucide-react";
 import "./App.css";
 
 const prompts = [
@@ -8,69 +8,169 @@ const prompts = [
   "Create a practical plan",
 ];
 
+type StreamEvent =
+  | { event: "status"; data: { state: string; request_id: string } }
+  | { event: "token"; data: { content: string } }
+  | {
+      event: "done";
+      data: {
+        request_id: string;
+        finish_reason: string | null;
+        truncated: boolean;
+        usage: Record<string, unknown> | null;
+        partial_assistant_content: string | null;
+      };
+    }
+  | {
+      event: "error";
+      data: {
+        code: string;
+        message: string;
+        retryable: boolean;
+      };
+    };
+
 export default function App() {
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [partialContent, setPartialContent] = useState<string | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
 
-  const ask = async () => {
-    const value = query.trim();
-    if (!value || isThinking) return;
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setIsThinking(true);
+  const reset = useCallback(() => {
     setAnswer("");
     setError(null);
+    setTruncated(false);
+    setPartialContent(null);
+  }, []);
 
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL ?? ""}/`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: value }),
-          signal: controller.signal,
-        },
-      );
+  const streamChat = useCallback(
+    async ({
+      endpoint,
+      payload,
+    }: {
+      endpoint: string;
+      payload: Record<string, unknown>;
+    }) => {
+      abortRef.current?.abort();
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-      if (!response.body) {
-        throw new Error("No response body");
-      }
+      setIsThinking(true);
+      setError(null);
+      setTruncated(false);
+      setPartialContent(null);
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value: chunk } = await reader.read();
-        if (done) break;
-        setAnswer(
-          (current) => current + decoder.decode(chunk, { stream: true }),
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_API_BASE_URL ?? ""}${endpoint}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          },
         );
-      }
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        return;
-      }
-      setError(err instanceof Error ? err.message : "Unable to get a response");
-      setAnswer("");
-    } finally {
-      setIsThinking(false);
-      abortRef.current = null;
-    }
-  };
 
-  const stop = () => {
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+
+        if (!response.body) {
+          throw new Error("The server returned no response body");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          const events = buffer.split("\n\n");
+          buffer = events.pop() ?? "";
+
+          for (const rawEvent of events) {
+            const parsedEvent = parseSSEEvent(rawEvent);
+
+            if (!parsedEvent) continue;
+
+            if (parsedEvent.event === "token") {
+              setAnswer((current) => current + parsedEvent.data.content);
+            }
+
+            if (parsedEvent.event === "error") {
+              setError(parsedEvent.data.message);
+            }
+
+            if (parsedEvent.event === "done") {
+              const { truncated, partial_assistant_content } = parsedEvent.data;
+
+              setTruncated(truncated);
+              setPartialContent(truncated ? partial_assistant_content : null);
+            }
+          }
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Unable to get a response. Please try again.",
+        );
+      } finally {
+        setIsThinking(false);
+        abortRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const ask = useCallback(() => {
+    const value = query.trim();
+
+    if (!value || isThinking) return;
+
+    reset();
+    setQuery("");
+
+    void streamChat({
+      endpoint: "/",
+      payload: { query: value },
+    });
+  }, [query, isThinking, reset, streamChat]);
+
+  const continueResponse = useCallback(() => {
+    if (!partialContent || isThinking) return;
+
+    const currentQuery = query.trim();
+
+    void streamChat({
+      endpoint: "/continue",
+      payload: {
+        query: currentQuery,
+        partial_assistant_content: partialContent,
+      },
+    });
+  }, [partialContent, isThinking, query, streamChat]);
+
+  const stop = useCallback(() => {
     abortRef.current?.abort();
-  };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -87,6 +187,7 @@ export default function App() {
           </span>
           <span>Mentor</span>
         </div>
+
         <span className="status-dot">Private workspace</span>
       </nav>
 
@@ -107,6 +208,7 @@ export default function App() {
             <div className="answer-label">
               <Sparkles size={14} /> Mentor
             </div>
+
             <div className="answer-copy">
               {answer || (
                 <span className="thinking">
@@ -116,6 +218,23 @@ export default function App() {
                 </span>
               )}
             </div>
+
+            {truncated && !isThinking && (
+              <div className="truncation-notice">
+                <p>
+                  The response reached the output limit and may be incomplete.
+                </p>
+
+                <button
+                  className="continue-button"
+                  onClick={continueResponse}
+                  disabled={!partialContent}
+                >
+                  <RotateCcw size={14} />
+                  Continue response
+                </button>
+              </div>
+            )}
           </article>
         )}
 
@@ -140,10 +259,12 @@ export default function App() {
             rows={3}
             disabled={isThinking}
           />
+
           <div className="composer-footer">
             <span className="hint">
               Press Enter to ask · Shift + Enter for a new line
             </span>
+
             <button
               className="send-button"
               onClick={isThinking ? stop : ask}
@@ -174,4 +295,32 @@ export default function App() {
       <footer>Mentor offers guidance, not professional advice.</footer>
     </main>
   );
+}
+
+function parseSSEEvent(rawEvent: string): StreamEvent | null {
+  const lines = rawEvent.split("\n");
+
+  let eventName: string | null = null;
+  let data = "";
+
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      eventName = line.replace("event:", "").trim();
+    }
+
+    if (line.startsWith("data:")) {
+      data += line.replace("data:", "").trim();
+    }
+  }
+
+  if (!eventName || !data) return null;
+
+  try {
+    return {
+      event: eventName,
+      data: JSON.parse(data),
+    } as StreamEvent;
+  } catch {
+    return null;
+  }
 }

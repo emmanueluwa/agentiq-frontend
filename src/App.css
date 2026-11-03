@@ -262,3 +262,40 @@ footer {
     font-size: 11px;
   }
 }
+
+.truncation-notice {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #eee9e2;
+}
+
+.truncation-notice p {
+  margin: 0 0 12px;
+  color: #8a847b;
+  font-size: 13px;
+}
+
+.continue-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  border: 1px solid #d8d4cd;
+  border-radius: 999px;
+  color: #35322e;
+  background: #fff;
+  font-size: 12px;
+  transition:
+    border 0.2s,
+    background 0.2s;
+}
+
+.continue-button:hover:not(:disabled) {
+  border-color: #aaa49b;
+  background: #faf9f6;
+}
+
+.continue-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
