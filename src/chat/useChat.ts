@@ -122,6 +122,15 @@ export function useChat() {
           setError(event.data.message);
         }
 
+        if (event.event === "grounding") {
+          updateAssistantMessage(assistantMessageId, {
+            sources: event.data.sources,
+            citedSourceIds: event.data.cited_source_ids,
+            invalidSourceIds: event.data.invalid_source_ids,
+            grounded: event.data.grounded,
+          });
+        }
+
         if (event.event === "done") {
           updateAssistantMessage(assistantMessageId, {
             truncated: event.data.truncated,

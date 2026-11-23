@@ -7,6 +7,10 @@ export type ChatMessage = {
   content: string;
   truncated?: boolean;
   partialContent?: string | null;
+  sources?: ResearchSource[];
+  citedSourceIds?: string[];
+  invalidSourceIds?: string[];
+  grounded?: boolean;
 };
 
 export type StreamEvent =
@@ -39,6 +43,10 @@ export type StreamEvent =
         message: string;
         retryable: boolean;
       };
+    }
+  | {
+      event: "grounding";
+      data: GroundingData;
     };
 
 export type ConversationResponse = {
@@ -49,4 +57,20 @@ export type ConversationResponse = {
     content: string;
     truncated?: boolean;
   }>;
+};
+
+export type ResearchSource = {
+  id: string;
+  title: string;
+  url: string;
+  source_type: string;
+  published_at: string | null;
+  excerpt: string;
+};
+
+export type GroundingData = {
+  cited_source_ids: string[];
+  invalid_source_ids: string[];
+  grounded: boolean;
+  sources: ResearchSource[];
 };
