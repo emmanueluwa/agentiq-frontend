@@ -221,6 +221,7 @@ export function useChat() {
   }, []);
 
   return {
+    conversationId,
     messages,
     isThinking,
     error,

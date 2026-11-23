@@ -6,12 +6,14 @@ type ChatMessageListProps = {
   messages: ChatMessage[];
   isThinking: boolean;
   onContinue: (message: ChatMessage) => void;
+  onCreatePlan: (message: ChatMessage) => void;
 };
 
 export function ChatMessageList({
   messages,
   isThinking,
   onContinue,
+  onCreatePlan,
 }: ChatMessageListProps) {
   return (
     <>
@@ -49,6 +51,15 @@ export function ChatMessageList({
                 Continue response
               </button>
             </div>
+          )}
+          {message.role === "assistant" && message.content && (
+            <button
+              className="create-plan-button"
+              onClick={() => onCreatePlan(message)}
+              disabled={isThinking || !message.serverId}
+            >
+              Create plan
+            </button>
           )}
         </article>
       ))}
