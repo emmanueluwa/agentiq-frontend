@@ -107,3 +107,13 @@ export async function updatePlanItemStatus({
     throw new Error(`Unable to update plan item: ${response.status}`);
   }
 }
+
+export async function deletePlan(planId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/plans/${planId}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unable to delete plan: ${response.status}`);
+  }
+}

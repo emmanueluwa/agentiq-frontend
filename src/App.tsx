@@ -46,10 +46,12 @@ export default function App() {
     activePlan,
     activePlanId,
     isLoading: isLoadingPlans,
+    isDeleting: isDeletingPlan,
     error: plansError,
     selectPlan,
     createPlan,
     togglePlanItem,
+    deletePlan,
   } = usePlans();
 
   const [planSourceMessage, setPlanSourceMessage] =
@@ -163,6 +165,22 @@ export default function App() {
       );
     } finally {
       setIsUpdatingPlan(false);
+    }
+  };
+
+  const handleDeletePlan = async (planId: string) => {
+    setPlanError(null);
+
+    try {
+      await deletePlan(planId);
+      setPlanSourceMessage(null);
+      setPlanDraft(null);
+    } catch (deleteError) {
+      setPlanError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete the plan.",
+      );
     }
   };
 
@@ -334,9 +352,12 @@ export default function App() {
                 />
               ) : activePlan ? (
                 <PlanView
+                  key={activePlan.id}
                   plan={activePlan}
                   isUpdating={isUpdatingPlan}
+                  isDeleting={isDeletingPlan}
                   onToggleItem={handleTogglePlanItem}
+                  onDelete={handleDeletePlan}
                 />
               ) : (
                 <div className="plan-empty">

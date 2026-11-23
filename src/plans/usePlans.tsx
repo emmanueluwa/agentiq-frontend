@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { createPlan as createPlanRequest, listPlans } from "./api";
+import {
+  createPlan as createPlanRequest,
+  deletePlan as deletePlanRequest,
+  listPlans,
+} from "./api";
 import type { Plan, PlanItemStatus } from "./types";
 
 type CreatePlanInput = {
@@ -15,6 +19,7 @@ export function usePlans() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [activePlanId, setActivePlanId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const activePlan = plans.find((plan) => plan.id === activePlanId) ?? null;
@@ -117,14 +122,40 @@ export function usePlans() {
     [plans],
   );
 
+  const deletePlan = useCallback(async (planId: string): Promise<void> => {
+    setIsDeleting(true);
+
+    try {
+      await deletePlanRequest(planId);
+
+      setPlans((current) => {
+        const remainingPlans = current.filter((plan) => plan.id !== planId);
+
+        setActivePlanId((currentActivePlanId) => {
+          if (currentActivePlanId !== planId) {
+            return currentActivePlanId;
+          }
+
+          return remainingPlans[0]?.id ?? null;
+        });
+
+        return remainingPlans;
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  }, []);
+
   return {
     plans,
     activePlan,
     activePlanId,
     isLoading,
+    isDeleting,
     error,
     selectPlan,
     createPlan,
     togglePlanItem,
+    deletePlan,
   };
 }
