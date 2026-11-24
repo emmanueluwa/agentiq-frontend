@@ -21,6 +21,12 @@ export function useChat() {
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [isLoadingConversation, setIsLoadingConversation] = useState(() =>
+    Boolean(localStorage.getItem(CONVERSATION_ID_KEY)),
+  );
+
+  const [conversationLoadFailed, setConversationLoadFailed] = useState(false);
+
   const abortRef = useRef<AbortController | null>(null);
 
   const updateAssistantMessage = useCallback(
@@ -47,19 +53,38 @@ export function useChat() {
 
         if (cancelled) return;
 
-        setConversationId(conversation.id);
-        setMessages(
-          conversation.messages.map((message) => ({
+        const restoredMessages: ChatMessage[] = conversation.messages.map(
+          (message) => ({
             id: message.id,
             serverId: message.id,
             role: message.role === "assistant" ? "assistant" : "user",
             content: message.content,
             truncated: message.truncated ?? false,
             partialContent: message.truncated ? message.content : null,
-          })),
+            sources: message.sources ?? [],
+            citedSourceIds: message.cited_source_ids ?? [],
+            invalidSourceIds: message.invalid_source_ids ?? [],
+            grounded: message.grounded ?? undefined,
+          }),
         );
-      } catch {
-        localStorage.removeItem(CONVERSATION_ID_KEY);
+
+        setConversationId(conversation.id);
+        setMessages(restoredMessages);
+        setConversationLoadFailed(false);
+        setError(null);
+      } catch (loadError) {
+        if (cancelled) return;
+
+        setConversationLoadFailed(true);
+        setError(
+          loadError instanceof Error
+            ? `${loadError.message}. Your saved conversation has been kept. Refresh to retry.`
+            : "Unable to load the saved conversation. Your saved conversation has been kept. Refresh to retry.",
+        );
+      } finally {
+        if (!cancelled) {
+          setIsLoadingConversation(false);
+        }
       }
     };
 
@@ -80,7 +105,7 @@ export function useChat() {
       payload: Record<string, unknown>;
       assistantMessageId: string;
     }) => {
-      abortRef.current?.abort();
+      if (abortRef.current) return;
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -89,55 +114,66 @@ export function useChat() {
       setError(null);
 
       const handleEvent = (event: StreamEvent) => {
-        if (event.event === "status") {
-          if (event.data.conversation_id) {
-            setConversationId(event.data.conversation_id);
-            localStorage.setItem(
-              CONVERSATION_ID_KEY,
-              event.data.conversation_id,
-            );
+        if (controller.signal.aborted || abortRef.current !== controller) {
+          return;
+        }
+
+        if (event.event === "status" || event.event === "done") {
+          const {
+            conversation_id: nextConversationId,
+            assistant_message_id: serverMessageId,
+          } = event.data;
+
+          if (nextConversationId) {
+            setConversationId(nextConversationId);
+            localStorage.setItem(CONVERSATION_ID_KEY, nextConversationId);
           }
 
-          if (event.data.assistant_message_id) {
+          if (serverMessageId) {
             updateAssistantMessage(assistantMessageId, {
-              serverId: event.data.assistant_message_id,
+              serverId: serverMessageId,
             });
           }
         }
 
-        if (event.event === "token") {
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantMessageId
-                ? {
-                    ...message,
-                    content: message.content + event.data.content,
-                  }
-                : message,
-            ),
-          );
-        }
+        switch (event.event) {
+          case "status":
+            break;
 
-        if (event.event === "error") {
-          setError(event.data.message);
-        }
+          case "token":
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantMessageId
+                  ? {
+                      ...message,
+                      content: message.content + event.data.content,
+                    }
+                  : message,
+              ),
+            );
+            break;
 
-        if (event.event === "grounding") {
-          updateAssistantMessage(assistantMessageId, {
-            sources: event.data.sources,
-            citedSourceIds: event.data.cited_source_ids,
-            invalidSourceIds: event.data.invalid_source_ids,
-            grounded: event.data.grounded,
-          });
-        }
+          case "error":
+            setError(event.data.message);
+            break;
 
-        if (event.event === "done") {
-          updateAssistantMessage(assistantMessageId, {
-            truncated: event.data.truncated,
-            partialContent: event.data.truncated
-              ? event.data.partial_assistant_content
-              : null,
-          });
+          case "grounding":
+            updateAssistantMessage(assistantMessageId, {
+              sources: event.data.sources,
+              citedSourceIds: event.data.cited_source_ids,
+              invalidSourceIds: event.data.invalid_source_ids,
+              grounded: event.data.grounded,
+            });
+            break;
+
+          case "done":
+            updateAssistantMessage(assistantMessageId, {
+              truncated: event.data.truncated,
+              partialContent: event.data.truncated
+                ? event.data.partial_assistant_content
+                : null,
+            });
+            break;
         }
       };
 
@@ -149,10 +185,7 @@ export function useChat() {
           onEvent: handleEvent,
         });
       } catch (streamError) {
-        if (
-          streamError instanceof DOMException &&
-          streamError.name === "AbortError"
-        ) {
+        if (controller.signal.aborted || abortRef.current !== controller) {
           return;
         }
 
@@ -162,8 +195,10 @@ export function useChat() {
             : "Unable to get a response. Please try again.",
         );
       } finally {
-        setIsThinking(false);
-        abortRef.current = null;
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          setIsThinking(false);
+        }
       }
     },
     [updateAssistantMessage],
@@ -173,7 +208,15 @@ export function useChat() {
     (query: string) => {
       const value = query.trim();
 
-      if (!value || isThinking) return;
+      if (
+        !value ||
+        isThinking ||
+        isLoadingConversation ||
+        conversationLoadFailed ||
+        abortRef.current
+      ) {
+        return;
+      }
 
       const userMessage = createMessage("user", value);
       const assistantMessage = createMessage("assistant");
@@ -189,7 +232,13 @@ export function useChat() {
         assistantMessageId: assistantMessage.id,
       });
     },
-    [conversationId, isThinking, streamResponse],
+    [
+      conversationId,
+      isThinking,
+      isLoadingConversation,
+      conversationLoadFailed,
+      streamResponse,
+    ],
   );
 
   const continueResponse = useCallback(
@@ -198,7 +247,10 @@ export function useChat() {
         !message.partialContent ||
         !conversationId ||
         !message.serverId ||
-        isThinking
+        isThinking ||
+        isLoadingConversation ||
+        conversationLoadFailed ||
+        abortRef.current
       ) {
         return;
       }
@@ -216,7 +268,13 @@ export function useChat() {
         assistantMessageId: continuationMessage.id,
       });
     },
-    [conversationId, isThinking, streamResponse],
+    [
+      conversationId,
+      isThinking,
+      isLoadingConversation,
+      conversationLoadFailed,
+      streamResponse,
+    ],
   );
 
   const stop = useCallback(() => {
@@ -225,7 +283,9 @@ export function useChat() {
 
   useEffect(() => {
     return () => {
-      abortRef.current?.abort();
+      const controller = abortRef.current;
+      abortRef.current = null;
+      controller?.abort();
     };
   }, []);
 
@@ -237,5 +297,7 @@ export function useChat() {
     ask,
     continueResponse,
     stop,
+    isLoadingConversation,
+    conversationLoadFailed,
   };
 }

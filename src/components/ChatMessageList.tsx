@@ -87,11 +87,17 @@ export function ChatMessageList({
 
           <div className="message-copy">
             {message.role === "assistant" && !message.content ? (
-              <span className="thinking">
-                <i />
-                <i />
-                <i />
-              </span>
+              isThinking && message.id === messages[messages.length - 1]?.id ? (
+                <span className="thinking">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              ) : (
+                <span className="incomplete-response">
+                  No response text was saved for this message.
+                </span>
+              )
             ) : message.role === "assistant" && message.sources ? (
               renderContent(message.content, message.sources, setSelectedSource)
             ) : (

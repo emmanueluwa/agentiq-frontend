@@ -10,7 +10,7 @@ export type ChatMessage = {
   sources?: ResearchSource[];
   citedSourceIds?: string[];
   invalidSourceIds?: string[];
-  grounded?: boolean;
+  grounded?: boolean | null;
 };
 
 export type StreamEvent =
@@ -56,6 +56,10 @@ export type ConversationResponse = {
     role: string;
     content: string;
     truncated?: boolean;
+    cited_source_ids?: string[];
+    invalid_source_ids?: string[];
+    grounded?: boolean | null;
+    sources?: ResearchSource[];
   }>;
 };
 
